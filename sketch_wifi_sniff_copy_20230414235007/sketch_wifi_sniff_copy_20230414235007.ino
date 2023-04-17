@@ -5,8 +5,12 @@
 #include <esp_wifi.h>
 #include <esp_wifi_types.h>
 #define WIFI_PKT_PROBE_REQ 0x40
+
 File dataFile;                    // File object to handle SD card file
-SoftwareSerial mySerial(34, -1);  // RX pin: 34, TX pin: -1 (not used)
+
+SoftwareSerial SerialGPS(34, -1);  // RX pin: 34, TX pin: -1 (not used)
+TinyGPSPlus gps;
+
 typedef struct {
   uint8_t frame_control[2];
   unsigned duration_id : 16;
@@ -31,7 +35,7 @@ void promiscuousCallback(void *buf, wifi_promiscuous_pkt_type_t type) {
 
 void setup() {
   Serial.begin(9600);    // Start serial communication with the Arduino IDE
-  mySerial.begin(9600);  // Start serial communication with the external serial module
+  SerialGPS.begin(9600);  // Start serial communication with the external serial module
 
   if (!SD.begin(SS)) {
     Serial.println("SD card initialization failed!");

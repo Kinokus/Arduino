@@ -1,13 +1,4 @@
 // ESP32 WiFi beacon sniffer
-//
-// by Michele <o-zone@zerozone.it> Pinassi
-// https://github.com/michelep/ESP32_BeaconSniffer
-//
-// Sighly based on https://github.com/ESP-EOS/ESP32-WiFi-Sniffer, code written to work on ESP32 TTGO with OLED display SSD1306 I2C
-//
-// Build with TTGO-LoRa32-OLED V1 Arduino template
-//
-// https://www.espressif.com/en/products/hardware/esp32-devkitc/resources
 
 #include "freertos/FreeRTOS.h"
 #include "esp_wifi.h"
@@ -17,28 +8,39 @@
 #include "esp_event_loop.h"
 #include "nvs_flash.h"
 #include "driver/gpio.h"
+#include "FS.h"
+#include "SD.h"
+#include <TinyGPS++.h>
+#include <SoftwareSerial.h>
 
-// #include "logo.h"
-
-// OLED LCD display
-// https://github.com/igrr/esp8266-oled-ssd1306
-#include <Wire.h>
-// #include "SSD1306.h"
 
 #define I2C_SCL 4
 #define I2C_SDA 5
 
-#define DISPLAY_MAX_W 128
-#define DISPLAY_MAX_H 64
-
-// SSD1306 display(0x3c, I2C_SDA, I2C_SCL);
-//
 #define WIFI_CHANNEL_SWITCH_INTERVAL (500)
 #define WIFI_CHANNEL_MAX (13)
 
+File dataFile;  // File object to handle SD card file
+
+SoftwareSerial SerialGPS(34, -1);  // RX pin: 34, TX pin: -1 (not used)
+TinyGPSPlus gps;
+
+char full4dPlace[36];
+
+char year[2];
+char month[2];
+char day[2];
+
+char hour[2];
+char minute[2];
+char second[2];
+
+char lat[8];
+char lng[8];
+
 uint8_t level = 0, channel = 1;
 
-static wifi_country_t wifi_country = { .cc = "IT", .schan = 1, .nchan = 13 };  // Most recent esp32 library struct
+static wifi_country_t wifi_country = { .cc = "CN", .schan = 1, .nchan = 13 };  // Most recent esp32 library struct
 
 typedef struct {
   unsigned protocol : 2;
@@ -71,8 +73,7 @@ typedef struct {
 } wifi_ieee80211_packet_t;
 
 
-typedef struct
-{
+typedef struct {
   unsigned interval : 16;
   unsigned capability : 16;
   unsigned tag_number : 8;
@@ -140,6 +141,13 @@ const char *wifi_sniffer_packet_type2str(wifi_promiscuous_pkt_type_t type) {
     case WIFI_PKT_MISC: return "MISC";
   }
 }
+const char *wifi_sniffer_packet_subtype2str(wifi_mgmt_subtypes_t type) {
+  switch (type) {
+    case BEACON: return "BEACON";
+    case PROBE_REQ: return "PROBE_REQ";
+    default: return "MISC";
+  }
+}
 
 static void get_ssid(unsigned char *data, char ssid[32], uint8_t ssid_len) {
   int i, j;
@@ -186,24 +194,25 @@ void wifi_sniffer_packet_handler(void *buff, wifi_promiscuous_pkt_type_t type) {
     ssid_len = pkt->payload[25];
     if (ssid_len > 0)
       get_ssid(pkt->payload, ssid, ssid_len);
-    // else
-      // ssid = { 0 };
-    // char ssid[SSID_MAX_LEN] = "\0",
   }
 
   printf(""
 
-         "PACKET"
-         " TYPE=%s,"
+         " P_TYPE=%s(%d),"
+         " P_S_TYPE=%s(%d),"
          " CHAN=%02d,"
          " RSSI=%02d,"
          " ADDR1=%02x:%02x:%02x:%02x:%02x:%02x,"
          " ADDR2=%02x:%02x:%02x:%02x:%02x:%02x,"
          " ADDR3=%02x:%02x:%02x:%02x:%02x:%02x"
-         " SSID=%s"
+         " SSID=%s,"
+         " 4DPLACE=%s"
 
          "\n",
          wifi_sniffer_packet_type2str(type),
+         type,
+         wifi_sniffer_packet_subtype2str((wifi_mgmt_subtypes_t)fctl->subtype),
+         fctl->subtype,
          ppkt->rx_ctrl.channel,
          ppkt->rx_ctrl.rssi,
          // ADDR1
@@ -215,7 +224,8 @@ void wifi_sniffer_packet_handler(void *buff, wifi_promiscuous_pkt_type_t type) {
          // ADDR3
          hdr->addr3[0], hdr->addr3[1], hdr->addr3[2],
          hdr->addr3[3], hdr->addr3[4], hdr->addr3[5],
-         ssid);
+         ssid,
+         full4dPlace);
 }
 // ************************************
 // DEBUG()
@@ -252,62 +262,69 @@ void IRAM_ATTR onTimer() {
 
 // the setup function runs once when you press reset or power the board
 void setup() {
+
+
   Serial.begin(115200);
-  delay(10);
-  // Initialize OLED display
-  // display.init();
-  // display.drawXbm(0, 0, logo_width, logo_height, logo_bits);
-  // display.display();
+  SerialGPS.begin(9600);
+
   delay(5000);
-
   wifi_sniffer_init();
-
   timer = timerBegin(0, 80, true);
   timerAttachInterrupt(timer, &onTimer, true);
   timerAlarmWrite(timer, 1000000, true);
   timerAlarmEnable(timer);
+
+  if (!SD.begin(SS)) {
+    Serial.println("SD card initialization failed!");
+    while (1)
+      ;
+  }
+  // Create a new file on the SD card, or append to an existing file
+  dataFile = SD.open("/data.txt", FILE_APPEND);  // Open file in write mode
+
+  if (dataFile) {
+    dataFile.println("Data logged:");
+    dataFile.close();
+  } else {
+    Serial.println("Error opening data file");
+  }
 }
 
 // the loop function runs over and over again forever
 void loop() {
   if (timerChannel) {
-    WiFiBeacon *beacon;
-
-    // Age for all beacons detected...
-    for (int i = 0; i < myBeacons.size(); i++) {
-      beacon = myBeacons.get(i);
-      beacon->lastseen++;
-      if (beacon->lastseen > 60) {
-        // older that 60 secs? remove it!
-        Serial.printf("Remove lost beacon %s\n", beacon->name);
-        myBeacons.remove(i);
-      }
-    }
-
     // Set channel
     wifi_sniffer_set_channel(channel);
     channel = (channel % WIFI_CHANNEL_MAX) + 1;
-
-    // Update display
-    // display.clear();
-    // display.setColor(WHITE);
-    // display.drawHorizontalLine(0, 0, round((DISPLAY_MAX_W / WIFI_CHANNEL_MAX)*channel));
-    // display.drawHorizontalLine(0, 1, round((DISPLAY_MAX_W / WIFI_CHANNEL_MAX)*channel));
-
-    // display.setTextAlignment(TEXT_ALIGN_CENTER);
-    // display.drawString(64, 2, String(channel));
-    // display.drawHorizontalLine(0, 14, DISPLAY_MAX_W);
-    // display.setTextAlignment(TEXT_ALIGN_LEFT);
-    // display.drawString(0, 16, "Total APs: "+String(myBeacons.size()));
-
-    // Display the 4 nearest APs..
-    for (int i = 0; i < 4; i++) {
-      beacon = myBeacons.get(i);
-      // display.drawString(0, 26+(10*i), String(beacon->name));
-    }
-
-    // display.display();
-
     timerChannel = false;
   }
+  while (SerialGPS.available() > 0) {
+    gps.encode(SerialGPS.read());
+  }
+  ///
+  gps.date.year();
+  snprintf(
+    full4dPlace,
+    36,
+    "%04d.%02d.%02d %02d:%02d:%02d %3.4f %3.4f",
+    gps.date.year(),
+    gps.date.month(),
+    gps.date.day(),
+
+    gps.time.hour(),
+    gps.time.minute(),
+    gps.time.second(),
+
+    gps.location.lat(),
+    gps.location.lng()
+
+  );
+  // sprintf(year, '%d', gps.date.year());
+  // sprintf(month, '%d', gps.date.month());
+  // sprintf(date, '%d', gps.date.day());
+  // sprintf(hour, '%d', gps.time.hour());
+  // sprintf(minute, '%d', gps.time.minute());
+  // sprintf(second, '%d', gps.time.second());
+  // sprintf(lat, '%d', gps.location.lat());
+  // sprintf(lng, '%d', gps.location.lng());
 }

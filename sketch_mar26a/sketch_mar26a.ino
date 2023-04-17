@@ -73,10 +73,7 @@ void loop() {
   }
   // Serial.println(gps.satellites.value());
   if (gps.time.isUpdated() && gps.satellites.isUpdated()) {
-
-
-
-    sprintf(
+    snprintf(
       currentDate, 
       "" 
       "%04d."
