@@ -145,6 +145,7 @@ const char *wifi_sniffer_packet_subtype2str(wifi_mgmt_subtypes_t type) {
   switch (type) {
     case BEACON: return "BEACON";
     case PROBE_REQ: return "PROBE_REQ";
+    case PROBE_RES: return "PROBE_RES";
     default: return "MISC";
   }
 }
@@ -190,42 +191,68 @@ void wifi_sniffer_packet_handler(void *buff, wifi_promiscuous_pkt_type_t type) {
   }
 
   if (fctl->subtype == PROBE_REQ) {
+    // printf("%d - %d",fctl->subtype,PROBE_REQ);
     uint8_t ssid_len;
     ssid_len = pkt->payload[25];
     if (ssid_len > 0)
       get_ssid(pkt->payload, ssid, ssid_len);
   }
 
-  printf(""
+  if (fctl->subtype == BEACON || fctl->subtype == PROBE_REQ) {
 
-         " P_TYPE=%s(%d),"
-         " P_S_TYPE=%s(%d),"
-         " CHAN=%02d,"
-         " RSSI=%02d,"
-         " ADDR1=%02x:%02x:%02x:%02x:%02x:%02x,"
-         " ADDR2=%02x:%02x:%02x:%02x:%02x:%02x,"
-         " ADDR3=%02x:%02x:%02x:%02x:%02x:%02x"
-         " SSID=%s,"
-         " 4DPLACE=%s"
 
-         "\n",
-         wifi_sniffer_packet_type2str(type),
-         type,
-         wifi_sniffer_packet_subtype2str((wifi_mgmt_subtypes_t)fctl->subtype),
-         fctl->subtype,
-         ppkt->rx_ctrl.channel,
-         ppkt->rx_ctrl.rssi,
-         // ADDR1
-         hdr->addr1[0], hdr->addr1[1], hdr->addr1[2],
-         hdr->addr1[3], hdr->addr1[4], hdr->addr1[5],
-         // ADDR2
-         hdr->addr2[0], hdr->addr2[1], hdr->addr2[2],
-         hdr->addr2[3], hdr->addr2[4], hdr->addr2[5],
-         // ADDR3
-         hdr->addr3[0], hdr->addr3[1], hdr->addr3[2],
-         hdr->addr3[3], hdr->addr3[4], hdr->addr3[5],
-         ssid,
-         full4dPlace);
+
+    char fullRequest[256];
+
+    snprintf(
+      fullRequest,
+      256,
+      ""
+      " P_TYPE=%s(%d),"
+      " P_S_TYPE=%s(%d),"
+      " CHAN=%02d,"
+      " RSSI=%02d,"
+      " ADDR1=%02x:%02x:%02x:%02x:%02x:%02x,"
+      " ADDR2=%02x:%02x:%02x:%02x:%02x:%02x,"
+      " ADDR3=%02x:%02x:%02x:%02x:%02x:%02x"
+      " SSID=%s,"
+      " 4DPLACE=%s"
+
+      "\n",
+      wifi_sniffer_packet_type2str(type),
+      type,
+      wifi_sniffer_packet_subtype2str((wifi_mgmt_subtypes_t)fctl->subtype),
+      fctl->subtype,
+      ppkt->rx_ctrl.channel,
+      ppkt->rx_ctrl.rssi,
+      // ADDR1
+      hdr->addr1[0], hdr->addr1[1], hdr->addr1[2],
+      hdr->addr1[3], hdr->addr1[4], hdr->addr1[5],
+      // ADDR2
+      hdr->addr2[0], hdr->addr2[1], hdr->addr2[2],
+      hdr->addr2[3], hdr->addr2[4], hdr->addr2[5],
+      // ADDR3
+      hdr->addr3[0], hdr->addr3[1], hdr->addr3[2],
+      hdr->addr3[3], hdr->addr3[4], hdr->addr3[5],
+      ssid,
+      full4dPlace);
+
+    char filename[256];
+    if (fctl->subtype == BEACON) { 
+      snprintf(filename, 256, "/BEACONS_%04d%02d%02d%02d.log", gps.date.year(), gps.date.month(), gps.date.day(), gps.time.hour()); 
+      }
+    if (fctl->subtype == PROBE_REQ) { 
+      snprintf(filename, 256, "/PROBES_%04d%02d%02d%02d.log", gps.date.year(), gps.date.month(), gps.date.day(), gps.time.hour()); 
+      }
+    dataFile = SD.open(filename, FILE_APPEND);
+    if (dataFile) {
+      dataFile.print(fullRequest);
+      dataFile.close();
+    } else {
+      Serial.println("Error opening data file");
+    }
+    printf(fullRequest);
+  }
 }
 // ************************************
 // DEBUG()
@@ -305,8 +332,8 @@ void loop() {
   gps.date.year();
   snprintf(
     full4dPlace,
-    36,
-    "%04d.%02d.%02d %02d:%02d:%02d %3.4f %3.4f",
+    40,
+    "%04d.%02d.%02d %02d:%02d:%02d %3.6f %3.6f",
     gps.date.year(),
     gps.date.month(),
     gps.date.day(),

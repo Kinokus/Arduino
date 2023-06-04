@@ -292,7 +292,7 @@ protected:
     // Member variables
     int8_t m_rxPin = -1;
     int8_t m_txPin = -1;
-    bool m_invert;
+    bool m_invert = false;
 
 private:
     // It's legal to exceed the deadline, for instance,
@@ -342,9 +342,9 @@ private:
     /// PDU bits include data, parity and stop bits; the start bit is not counted.
     uint8_t m_pduBits;
     bool m_intTxEnabled;
-    bool m_rxGPIOHasPullUp;
-    bool m_rxGPIOPullUpEnabled;
-    bool m_txGPIOOpenDrain;
+    bool m_rxGPIOHasPullUp = false;
+    bool m_rxGPIOPullUpEnabled = true;
+    bool m_txGPIOOpenDrain = false;
     Parity m_parityMode;
     uint8_t m_stopBits;
     bool m_lastReadParity;
